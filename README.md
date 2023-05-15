@@ -20,4 +20,4 @@ This project involves building a database to analyze bird strikes on aircraft us
 8. Creating and using stored procedures in MySQL.
 
 ## How to run
-To run this notebook, you will need RMySQL and sqldf. You will also need to set up a MySQL called bird. Then, the notebook should run completely.
+To run this notebook, you will need RMySQL and sqldf. You will also need to set up a MySQL called bird. Then, the notebook should run completely. See birds_summary.nb.html for the output.
