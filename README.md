@@ -2,12 +2,12 @@
 This project involves building a database to analyze bird strikes on aircraft using an existing data set from the FAA. The main tasks include creating a logical data model and relational schema, implementing the schema in MySQL, loading the data from a CSV file into the database, executing SQL queries, performing analytics in R, and ensuring code runs efficiently without errors. The project also involves data cleaning tasks such as harmonizing data (flight phases), removing unnecessary data (military flights), and creating a stored procedure to add new incidents to the database. The final deliverables include the completed R Notebook with SQL code, query results, visualizations, and explanations of the code and decisions made throughout the project.
 
 ## Task Summary
-1. Inspecting the data file and creating a new database schema.
-2. Loading the data from the CSV file into the database tables.
-3. Displaying parts of each table to verify the data loading.
-4. Creating SQL queries to find the top-10 airlines with the most incidents, the flight phase with the above-average number of incidents, and the maximum number of incidents by month.
-5. Building a column chart to visualize the number of incidents per year from 2005 to 2011.
-6. Creating a stored procedure in MySQL to add a new incident to the database.
+1. Inspect the data file and create a new database schema.
+2. Load the data from the CSV file into the database tables.
+3. Display parts of each table to verify the data loading.
+4. Create SQL queries to find the top-10 airlines with the most incidents, the flight phase with the above-average number of incidents, and the maximum number of incidents by month.
+5. Build a column chart to visualize the number of incidents per year from 2005 to 2011.
+6. Create a stored procedure in MySQL to add a new incident to the database.
 
 ## Key skills/learnings
 1. Installing and connecting to MySQL from R.
