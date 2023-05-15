@@ -1,0 +1,586 @@
+---
+title: "Practicum 1 - birds"
+output: html_notebook
+---
+Author: Sophia Cofone 
+
+# Parts 1-3
+```{r echo=FALSE}
+
+# 1. Library
+require(RMySQL)
+library(sqldf)
+
+# # 2. Settings
+# db_user <- 'root'
+# db_password <- 'password'
+# db_host <- 'localhost'
+# db_port <- 3306
+
+# 3. Initial connection
+mydb <-  dbConnect(MySQL(), user = db_user, password = db_password,
+                 host = db_host, port = db_port, local_infile=TRUE)
+
+```
+
+```{sql connection=mydb}
+    
+set global local_infile=true;
+    
+```
+Step 1: Create a new database and connect to it.
+```{sql connection=mydb}
+
+CREATE DATABASE IF NOT EXISTS bird;
+
+```
+
+```{r echo=FALSE}
+# 2. Settings
+db_name <- 'bird'
+
+# update connection
+mydb <-  dbConnect(MySQL(), user = db_user, password = db_password,
+                 dbname = db_name, host = db_host, port = db_port, local_infile=TRUE)
+
+```
+Seeing if it worked:
+```{sql connection=mydb}
+
+SHOW DATABASES;
+
+```
+We see that "bird" was created, the name of our DB.
+
+Step 2: Create the 3 tables. The instructions say to use default values where the data file does not contain values or leave empty, unless it is airport or airline (add unknown as the default rather than null, n/a, or empty). For the airport table, aid is a synthetic primary key so we can use AUTO_INCREMENT. 
+```{sql, connection=mydb}
+
+CREATE TABLE airports(
+  aid INTEGER NOT NULL AUTO_INCREMENT, 
+  airportName VARCHAR(255) DEFAULT 'unknown', 
+  airportCode VARCHAR(3) DEFAULT null, 
+  state TEXT,
+  
+  PRIMARY KEY (aid)
+);
+
+```
+Since this is a look-up table, we can also use AUTO_INCREMENT for the PK.
+```{sql, connection=mydb}
+
+CREATE TABLE conditions(
+  cid INTEGER NOT NULL AUTO_INCREMENT, 
+  `condition` TEXT, 
+  explanation TEXT DEFAULT null,
+  
+  PRIMARY KEY (cid)
+);
+
+```
+This table needs to have appropriate FKs to connect to the PKs of the previous two tables. Origin and conditions will be the PKs of those tables. 
+```{sql connection=mydb}
+
+CREATE TABLE incidents(
+  rid INTEGER NOT NULL, 
+  date DATE, 
+  origin INTEGER, 
+  airline VARCHAR(255) DEFAULT 'unknown', 
+  aircraft TEXT, 
+  flightPhase TEXT, 
+  altitude INTEGER, 
+  conditions INTEGER, 
+  warning BIT DEFAULT b'0',
+  
+  FOREIGN KEY (origin) REFERENCES airports(aid),
+  FOREIGN KEY (conditions) REFERENCES conditions(cid),
+  PRIMARY KEY (rid)
+);
+
+```
+Check to make sure the tables were created:
+```{sql connection=mydb}
+
+SHOW TABLES;
+
+```
+Step 3: Load data.
+```{r}
+
+fn = "BirdStrikesData.csv"
+
+df.raw <- read.csv(file = fn,
+                   header = T,
+                   stringsAsFactors = F)
+# set backing store to SQLite for sqldf
+options(sqldf.driver = 'SQLite')
+```
+Directly making this modification (airport or airline - add unknown as the default rather than null, n/a, or empty) to the raw df, so I can use this information correctly when setting up the FKs later. 
+```{r}
+
+# Search for empty or null values in the "airport" column and replace with "unknown"
+df.raw$airport <- ifelse(is.na(df.raw$airport) | df.raw$airport == "", "unknown", df.raw$airport)
+
+# Search for empty or null values in the "airline" column and replace with "unknown"
+df.raw$airline <- ifelse(is.na(df.raw$airline) | df.raw$airline == "", "unknown", df.raw$airline)
+
+```
+Creating DF for the airports table:
+```{r}
+
+# select a fixed value for the first column, it acts as a placeholder for the artificial PK
+df.airports <- sqldf::sqldf("select 1 as aid, airport, origin from `df.raw` group by airport, origin")
+
+# assign an artificial PK using a counter
+n.airports <- nrow(df.airports)
+df.airports[,1] <- seq(1, n.airports)
+
+# change df names to the DB ones
+names(df.airports) <- c("aid", "airportName", "state")
+
+# adding airportcode placeholder column
+df.airports$airportCode <- NA
+df.airports <- df.airports[, c("aid", "airportName", "airportCode", "state")]
+
+```
+Checking to make sure the DF matches the airport table:
+```{r}
+
+df.airports
+
+```
+We have a synthetic PK, airports grouped by their name and location (which is relevant for the unknowns (as they come from different states)), and the empty airportCode col. 
+```{r}
+
+# filter the dataframe by unknown
+filtered_df <- subset(df.airports, airportName == "unknown")
+
+# view the filtered dataframe
+filtered_df
+
+```
+Theoretically even though the airport name is unknown we can still retain the state information for the origin for these planes.
+
+Load data:
+```{r loadDataBulkAirports}
+
+dbWriteTable(mydb, "airports", df.airports, overwrite = F, append = T,
+row.names = FALSE, field.types = c(aid = "integer", airportName = "text", airportCode = "varchar(3)", state = "TEXT"))
+
+```
+Checking to see the data loaded in.
+```{sql connection=mydb}
+    
+SELECT * FROM airports LIMIT 50;
+
+```
+
+Checking to make sure the unknowns retained the state differences
+```{sql connection=mydb}
+    
+SELECT * FROM airports WHERE airportName='unknown';
+
+```
+
+Creating DF for the conditions table:
+```{r}
+
+# select a fixed value for the first column, it acts as a placeholder for the artificial PK
+df.conditions<- sqldf::sqldf("select 1 as cid, sky_conditions from `df.raw` group by sky_conditions")
+
+# assign an artificial PK using a counter
+n.conditions <- nrow(df.conditions)
+df.conditions[,1] <- seq(1, n.conditions)
+
+# change df names to the DB ones
+names(df.conditions) <- c("cid", "condition")
+
+# adding explanation placeholder column
+df.conditions$explanation <- NA
+
+```
+Checking to make sure the DF matches the conditions table:
+```{r}
+
+df.conditions
+
+```
+
+Load data:
+```{r loadDataBulkConditions}
+
+dbWriteTable(mydb, "conditions", df.conditions, overwrite = F, append = T,
+row.names = FALSE, field.types = c(cid = "integer", condition = "text", explanation = "text"))
+
+```
+Checking to see the data loaded in (there should be only 3 but I am using LIMIT 5 to make sure).
+```{sql connection=mydb}
+    
+SELECT * FROM conditions LIMIT 5;
+
+```
+
+Creating DF for the incidents table:
+```{r}
+
+# select a fixed value for the origin and conditions, it acts as a placeholder for the FKs
+n.incidents <- nrow(df.raw)
+df.incidents <- data.frame(rid = df.raw$rid,
+                           date = df.raw$flight_date,
+                           origin = 1,
+                           airline = df.raw$airline,
+                           aircraft = df.raw$aircraft,
+                           flightPhase = df.raw$flight_phase,
+                           altitude = df.raw$altitude_ft,
+                           conditions = 1,
+                           warning = df.raw$pilot_warned_flag
+)
+
+# changing T to TRUE and F to FALSE in warning column
+df.incidents$warning <- ifelse(df.incidents$warning == "T", TRUE, FALSE)
+# changing altitude column to int
+df.incidents$altitude <- as.integer(gsub(",", "", df.incidents$altitude))
+# reformatting date column
+df.incidents$date <- as.Date(df.incidents$date, format = "%m/%d/%Y %H:%M")
+df.incidents$date <- format(df.incidents$date, "%Y-%m-%d")
+#changing dbl to int
+df.incidents$origin <- as.integer(df.incidents$origin)
+df.incidents$conditions <- as.integer(df.incidents$conditions)
+
+```
+Checking to make sure the DF matches the incidents table (and all of the required modifications went in):
+```{r}
+
+df.incidents
+
+```
+We see that DATE is now in the correct DATE format, the TRUE and FALSE tags are updated correctly, and the data types are appropriate.
+
+Now we need to update our placeholder FK cols:
+```{r}
+# updating placeholder FK columns with the correct PKs from our previous tables
+# process each row (incidents) one by one
+for (r in 1:n.incidents) {
+  # find the airport PK for that incident in the airport table
+  a <- df.airports$aid[which(df.airports$airportName == df.raw$airport[r] &
+                               df.airports$state == df.raw$origin[r])]
+
+  df.incidents$origin[r] <- a
+}
+```
+
+```{r}
+# updading our placeholder FK columns with the correct info from our previous tables
+# process each row (incidents) one by one
+for (r in 1:n.incidents) {
+  # find the conditions PK for that incident in the conditions table
+  a <- df.conditions$cid[which(df.conditions$condition == df.raw$sky_conditions[r])]
+
+  df.incidents$conditions[r] <- a
+}
+```
+
+Load data:
+```{r loadDataBulkIncidents}
+
+dbWriteTable(mydb, "incidents", df.incidents, overwrite = F, append = T,
+row.names = FALSE, field.types = c(
+  rid = "integer", 
+  date = "date", 
+  origin = "integer",
+  airline = "VARCHAR(255)",
+  aircraft = "text",
+  flightPhase = "text",
+  altitude = "integer",
+  conditions = "integer",
+  warning = "bit",))
+
+```
+Checking to see the data loaded in:
+```{sql connection=mydb}
+    
+SELECT * FROM incidents LIMIT 50;
+
+```
+
+Checking to make sure all the rows went in (should be 25558)
+```{sql connection=mydb}
+    
+SELECT count(*) FROM incidents;
+
+```
+
+Step 4: Update data in the DB to meet harmonize and military flights requirements.
+First, remove military flights:
+```{sql connection=mydb}
+    
+DELETE FROM incidents
+WHERE airline = 'MILITARY';
+
+```
+Checking to confirm:
+```{sql connection=mydb}
+    
+SELECT * FROM incidents WHERE airline = 'MILITARY';
+
+```
+It is probably not needed to keep the military airline in the airports table:
+```{sql connection=mydb}
+    
+DELETE FROM airports
+WHERE airportName = 'MILITARY';
+
+```
+Checking to confirm:
+```{sql connection=mydb}
+    
+SELECT * FROM airports WHERE airportName = 'MILITARY';
+
+```
+
+Checking data one more time:
+```{sql connection=mydb}
+    
+SELECT * FROM incidents LIMIT 50;
+
+```
+Next, lets harmonize.
+Assumptions: 
+climb, Take-off run, and takeoff are all called takeoff
+approach, Landing Roll, and landing are all called landing
+inflight and descent is called inflight
+taxi and parked and blank are called unknown.
+```{sql connection=mydb}
+
+UPDATE incidents
+SET flightPhase = 
+    CASE 
+        WHEN LOWER(flightPhase) LIKE '%takeoff%' OR 
+        LOWER(flightPhase) = 'climb' OR
+        LOWER(flightPhase) = 'take-off run' 
+        THEN 'takeoff'
+        
+        WHEN LOWER(flightPhase) LIKE '%landing%' OR 
+        LOWER(flightPhase) = 'approach' OR
+        LOWER(flightPhase) = 'landing roll'
+        THEN 'landing'
+        
+        WHEN LOWER(flightPhase) LIKE '%inflight%' OR
+        LOWER(flightPhase) = 'descent'
+        THEN 'inflight'
+        
+        ELSE 'unknown'
+    END;
+
+```
+Checking to make sure everything got coded as landing, takeoff, inflight, or unknown
+```{sql connection=mydb}
+    
+SELECT DISTINCT flightPhase FROM incidents;
+
+```
+
+# Part 4
+Find the top-10 airlines with the most number of incidents
+```{sql connection=mydb}
+    
+SELECT airline, COUNT(*) as num_incidents FROM incidents 
+GROUP BY airline 
+ORDER BY num_incidents DESC
+LIMIT 10;
+
+```
+# Part 5
+Find the flight phase that had an above average number bird strike incidents (during any flight phase).
+```{sql connection=mydb}
+
+# Takes the rows in flightPhase and counts them (saves as num_incidents)
+# The OVER() is used with AVG() to preform the avg over a set of rows that is different from the rows being returned by the query, meaning it is the average of the all the incidents regardless of phase (when we are grouping by phase later on) (saves as avg_num_incidents)
+# Then we just have to compare num_incidents with the overal avg to find out which flight phases have more strikes than avg.
+
+SELECT flightPhase, num_incidents, avg_num_incidents
+FROM (
+  SELECT flightPhase, COUNT(*) as num_incidents, AVG(COUNT(*)) OVER() as avg_num_incidents
+  FROM incidents
+  GROUP BY flightPhase
+) subq
+WHERE num_incidents > avg_num_incidents;
+
+```
+# Part 6
+Create a SQL query against your database to find the maximum number of bird strike incidents by month (across all years). Include all airlines and all flights. Some of the date information is missing, and by defualt the query will ignore those rows.
+```{sql connection=mydb}
+
+#outer q groups the rows by month and calculates the total number of bird strike incidents
+#sub q recalculates that same information, selects the max
+#then the outer q is filtered using having, showing the rows where total_incidents is the max 
+
+SELECT MONTH(date) AS month, COUNT(*) AS total_incidents
+FROM incidents
+GROUP BY MONTH(date)
+HAVING total_incidents = (
+  SELECT MAX(total_incidents)
+  FROM (
+    SELECT COUNT(*) AS total_incidents
+    FROM incidents
+    GROUP BY MONTH(date)
+  ) subq
+);
+
+```
+# Part 7
+Build a column chart that visualizes the number of bird strikes incidents per year from 2005 to 2011.
+
+Creating the DF
+```{r}
+    
+# construct a SQL query
+sqlCmd = "SELECT YEAR(date) AS year, COUNT(*) AS num_incidents
+FROM incidents
+WHERE YEAR(date) BETWEEN 2005 AND 2011
+GROUP BY YEAR(date)
+ORDER BY YEAR(date) ASC;"
+
+# send the SQL query to the database
+strike = dbGetQuery(mydb, sqlCmd)
+
+#checking the df to see if it worked
+strike
+
+```
+
+Making the chart
+```{r}
+
+library(ggplot2)
+
+# create chart
+strikeplot <- ggplot(strike, aes(x=year, y=num_incidents, fill=num_incidents)) +
+  geom_col() +
+  scale_fill_gradient(low="blue", high="red") + 
+  ggtitle("Number of Bird Strikes Incidents per Year") +
+  xlab("Year") +
+  ylab("Number of Bird Strikes Incidents") +
+  theme_light() +
+  geom_text(aes(label=num_incidents), vjust=2, color="white", size=4)
+
+strikeplot
+
+```
+# Part 8
+Create a stored procedure in MySQL that adds a new incident to the database
+
+This stored procedure to add a new incident to the database first declares two new variables, airport_count and new_aid. These are both used to determine if a new airport needs to be added to the airport table (and to record the aid for the incidents table). 
+
+The next part counts the number of rows, and stores it in airport_count where the airportName = the airport parameter. If airport_count = 0, then we know that the airport doesn't exist, so we add it. We also set the new aid from that addition to the new_aid variable. Even if we didn't have to add a new airport, we still want to record the aid in the new_aid variable so we can use it in the next part.
+
+Next, we move on to the insert statement for the incidents table. This part simply assigns the parameters to the correct values, and uses the new_aid for the origin FK as explained above.
+
+This stored procedure adds a bird strike incident and accounts for there being potentially a new airport. It does not account for there being a new condition as that was not mentioned in the assignment, so for the p_condition parameter you would enter 1, 2, or 3.
+```{sql connection=mydb}
+    
+CREATE PROCEDURE add_incident(
+IN p_airport VARCHAR(255), 
+IN p_state TEXT,
+IN p_rid INT, 
+IN p_date DATE,
+IN p_airline VARCHAR(255), 
+IN p_aircraft TEXT, 
+IN p_flightPhase TEXT, 
+IN p_altitude INT, 
+IN p_condition INT, 
+IN p_warning BIT
+)
+
+BEGIN
+    DECLARE airport_count INT;
+    DECLARE new_aid INT;
+    
+    SELECT COUNT(*) INTO airport_count
+    FROM airports
+    WHERE airportName = p_airport;
+    
+    IF airport_count = 0 THEN
+        INSERT INTO airports (airportName, state) 
+        VALUES (p_airport, p_state);
+        SET new_aid = LAST_INSERT_ID();
+     ELSE
+        SELECT aid INTO new_aid
+        FROM airports
+        WHERE airportName = p_airport;
+    END IF;
+    
+    INSERT INTO incidents(rid, date, origin, airline, aircraft, flightPhase, altitude, conditions, warning)
+    VALUES (p_rid, p_date, new_aid, p_airline, p_aircraft, p_flightPhase, p_altitude, p_condition, p_warning);
+
+END;
+
+```
+To test the add_incident procedure, first we confirm that a this incident does not already exist in the database:
+```{sql connection=mydb}
+
+SELECT * FROM incidents WHERE rid = '12345'
+
+```
+Then we confirm that this airport does not already exist in the database:
+```{sql connection=mydb}
+
+SELECT * FROM airports WHERE airportName = 'Ellison Onizuka Kona International Airport'
+
+```
+Both of these return no records as expected.
+
+Then we call our procedure:
+```{sql connection=mydb}
+
+CALL add_incident('Ellison Onizuka Kona International Airport','HI',12345,'2000-02-12','DELTA','Airplane','takeoff',1500,1,FALSE);
+
+```
+First lets check to make sure the new airport was added:
+```{sql connection=mydb}
+
+SELECT * FROM airports WHERE airportName = 'Ellison Onizuka Kona International Airport'
+
+```
+
+And then that the new indecent was added:
+```{sql connection=mydb}
+
+SELECT * FROM incidents WHERE rid = '12345'
+
+```
+
+We now see that the procedure successfully adds a new airport and indecent. Lets check to make sure we can add an indecent where the airport already exists.
+
+First we confirm that a this incident does not already exist in the database:
+```{sql connection=mydb}
+
+SELECT * FROM incidents WHERE rid = '123456'
+
+```
+Then we confirm that this airport does already exist in the database:
+```{sql connection=mydb}
+
+SELECT * FROM airports WHERE airportName = 'Ellison Onizuka Kona International Airport'
+
+```
+As expected, the incident select returns no rows, while the airport call returns 1 row.
+
+Running our procedure again:
+```{sql connection=mydb}
+
+CALL add_incident('Ellison Onizuka Kona International Airport','HI',123456,'2000-03-12','DELTA','Airplane','takeoff',500,2,TRUE);
+
+```
+
+And checking to see that it was added:
+```{sql connection=mydb}
+
+SELECT * FROM incidents WHERE rid = '123456'
+
+```
+Seeing that we got the new row back, we know that our procedure works as expected.
+
+```{r}
+dbDisconnect(mydb)
+
+```
